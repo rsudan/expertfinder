@@ -81,7 +81,7 @@
         <div class="max-w-[1280px] mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between items-center">
                 <div class="flex items-center gap-3">
-                    <i class="fa-brands fa-github text-3xl"></i>
+                    <i class="fa-solid fa-globe text-3xl text-gray-700"></i>
                     <h1 class="text-sm font-bold tracking-tight">Expert Finder</h1>
                 </div>
                 <button id="settingsBtn" class="text-gray-600 hover:text-gray-900 transition-colors p-1 rounded-md border border-gray-300 hover:border-gray-400 px-3 text-xs font-semibold">
@@ -145,7 +145,7 @@
                 <i class="fa-solid fa-spinner fa-spin text-[#57606a] text-4xl"></i>
             </div>
             <p class="text-base text-[#24292f] font-semibold">Searching...</p>
-            <p class="text-sm text-[#57606a]"> querying knowledge graph</p>
+            <p class="text-sm text-[#57606a]">Analyzing the field...</p>
         </div>
 
     </main>
@@ -164,7 +164,7 @@
                     </button>
                 </div>
                 
-                <div class="p-4 space-y-4">
+                <div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
                     <!-- API Key Input -->
                     <div>
                         <label for="apiKey" class="block text-sm font-semibold text-[#24292f] mb-1">Gemini API Key</label>
@@ -174,15 +174,27 @@
                                 <i class="fa-regular fa-eye"></i>
                             </button>
                         </div>
-                        <div class="mt-2 flex justify-between items-center">
+                        <div class="mt-2 flex justify-between items-center flex-wrap gap-2">
                             <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-xs text-[#0969da] hover:underline">
                                 Get API Key <i class="fa-solid fa-external-link-alt text-[10px]"></i>
                             </a>
-                            <button id="testKeyBtn" class="text-xs gh-btn-secondary px-2 py-1 rounded-md font-medium">
-                                Test Connection
-                            </button>
+                            <div class="flex gap-2">
+                                <button id="listModelsBtn" class="text-xs gh-btn-secondary px-2 py-1 rounded-md font-medium">
+                                    List Models
+                                </button>
+                                <button id="testKeyBtn" class="text-xs gh-btn-secondary px-2 py-1 rounded-md font-medium">
+                                    Test Connection
+                                </button>
+                            </div>
                         </div>
-                        <div id="connectionStatus" class="mt-1 h-4 text-xs"></div>
+                        <div id="connectionStatus" class="mt-1 text-xs font-mono break-all max-h-20 overflow-y-auto"></div>
+                    </div>
+
+                    <!-- Model Name Input -->
+                    <div>
+                        <label for="modelName" class="block text-sm font-semibold text-[#24292f] mb-1">Model Name</label>
+                        <input type="text" id="modelName" class="gh-input block w-full rounded-md py-1.5 px-3 text-sm font-mono text-[#24292f]" placeholder="gemini-1.5-flash">
+                        <p class="text-xs text-[#57606a] mt-1">Check "List Models" above to see what is available.</p>
                     </div>
 
                     <!-- System Prompt Input -->
@@ -204,19 +216,27 @@
     <script>
         // --- Constants & Defaults ---
         const DEFAULT_PROMPT = `You are an expert finder. The user is looking for top-tier experts in the field of: {{domain}}. 
-Identify 6-8 world-leading figures, researchers, or practitioners in this specific domain.
+
+Identify 6-8 world-leading figures in this specific domain.
 Return the result strictly as a raw JSON object (no markdown code blocks) with a key "experts" containing an array of objects. 
+
 Each object must have:
 - "name": Full name of the expert.
 - "affiliation": Current university, company, or organization.
 - "role": Job title or primary role.
 - "contributions": A concise summary of their key contributions, inventions, or famous works (max 2 sentences).
 - "justification": A brief explanation of why they are considered a top expert in this specific field.
-- "tags": An array of 2-3 specific sub-topics they are known for.`;
+- "tags": An array of 2-3 specific sub-topics they are known for.
+- "url": (Optional) Use the Google Search Tool to find a **stable, high-authority URL**. 
+   - **PRIORITY:** Return a Wikipedia page or a Google Scholar profile URL.
+   - **SECONDARY:** Return a LinkedIn profile.
+   - **AVOID:** Do NOT return specific news articles, PDF files, or temporary University faculty pages as these often return 404 errors.
+   - **FALLBACK:** If no stable URL is found, return null.`;
 
+        const DEFAULT_MODEL = 'gemini-2.5-flash';
         const STORAGE_KEY_API = 'expert_finder_api_key';
         const STORAGE_KEY_PROMPT = 'expert_finder_system_prompt';
-        const MODEL_NAME = 'gemini-2.5-flash-preview-09-2025';
+        const STORAGE_KEY_MODEL = 'expert_finder_model_name';
 
         // --- DOM Elements ---
         const els = {
@@ -228,8 +248,10 @@ Each object must have:
             cancelSettingsBtn: document.getElementById('cancelSettingsBtn'),
             saveSettingsBtn: document.getElementById('saveSettingsBtn'),
             apiKeyInput: document.getElementById('apiKey'),
+            modelNameInput: document.getElementById('modelName'),
             systemPromptInput: document.getElementById('systemPrompt'),
             testKeyBtn: document.getElementById('testKeyBtn'),
+            listModelsBtn: document.getElementById('listModelsBtn'),
             connectionStatus: document.getElementById('connectionStatus'),
             toggleKeyVisibility: document.getElementById('toggleKeyVisibility'),
             resetPromptBtn: document.getElementById('resetPromptBtn'),
@@ -249,13 +271,15 @@ Each object must have:
         // --- State ---
         let state = {
             apiKey: localStorage.getItem(STORAGE_KEY_API) || '',
-            prompt: localStorage.getItem(STORAGE_KEY_PROMPT) || DEFAULT_PROMPT
+            prompt: localStorage.getItem(STORAGE_KEY_PROMPT) || DEFAULT_PROMPT,
+            modelName: localStorage.getItem(STORAGE_KEY_MODEL) || DEFAULT_MODEL
         };
 
         // --- Initialization ---
         function init() {
             els.apiKeyInput.value = state.apiKey;
             els.systemPromptInput.value = state.prompt;
+            els.modelNameInput.value = state.modelName;
         }
 
         // --- Settings Modal Logic ---
@@ -282,18 +306,22 @@ Each object must have:
         els.cancelSettingsBtn.addEventListener('click', () => {
             els.apiKeyInput.value = state.apiKey;
             els.systemPromptInput.value = state.prompt;
+            els.modelNameInput.value = state.modelName;
             toggleSettings(false);
         });
 
         els.saveSettingsBtn.addEventListener('click', () => {
             const newKey = els.apiKeyInput.value.trim();
             const newPrompt = els.systemPromptInput.value.trim();
+            const newModel = els.modelNameInput.value.trim();
             
             state.apiKey = newKey;
             state.prompt = newPrompt;
+            state.modelName = newModel || DEFAULT_MODEL;
             
             localStorage.setItem(STORAGE_KEY_API, newKey);
             localStorage.setItem(STORAGE_KEY_PROMPT, newPrompt);
+            localStorage.setItem(STORAGE_KEY_MODEL, state.modelName);
             
             els.apiKeyWarning.classList.add('hidden');
             toggleSettings(false);
@@ -311,6 +339,11 @@ Each object must have:
 
         // --- API & Search Logic ---
 
+        function showStatus(msg, colorClass) {
+            els.connectionStatus.textContent = msg;
+            els.connectionStatus.className = `mt-1 text-xs font-medium ${colorClass}`;
+        }
+
         async function testConnection() {
             const key = els.apiKeyInput.value.trim();
             if (!key) {
@@ -320,7 +353,9 @@ Each object must have:
 
             showStatus('Testing...', 'text-[#57606a]');
             try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${key}`, {
+                // Testing with the currently selected model
+                const modelToTest = els.modelNameInput.value.trim() || DEFAULT_MODEL;
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToTest}:generateContent?key=${key}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -339,12 +374,38 @@ Each object must have:
             }
         }
 
-        function showStatus(msg, colorClass) {
-            els.connectionStatus.textContent = msg;
-            els.connectionStatus.className = `mt-1 h-4 text-xs font-medium ${colorClass}`;
+        async function listModels() {
+            const key = els.apiKeyInput.value.trim();
+            if (!key) {
+                showStatus('Please enter a key first.', 'text-[#cf222e]');
+                return;
+            }
+            
+            showStatus('Fetching models...', 'text-[#57606a]');
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+                const data = await response.json();
+                
+                if (data.models) {
+                    // Filter to only gemini models to keep list clean
+                    const names = data.models
+                        .map(m => m.name.replace('models/', ''))
+                        .filter(n => n.includes('gemini'))
+                        .join(', ');
+                    
+                    showStatus(`Available Models: ${names}`, 'text-[#24292f]');
+                    console.log('Full Model List:', data.models);
+                } else {
+                    const err = data.error?.message || 'Unknown error';
+                    showStatus(`Error: ${err}`, 'text-[#cf222e]');
+                }
+            } catch (e) {
+                showStatus('Error listing models.', 'text-[#cf222e]');
+            }
         }
 
         els.testKeyBtn.addEventListener('click', testConnection);
+        els.listModelsBtn.addEventListener('click', listModels);
 
         async function findExperts(domain) {
             if (!state.apiKey) {
@@ -358,20 +419,44 @@ Each object must have:
             els.expertsGrid.innerHTML = '';
 
             const prompt = state.prompt.replace('{{domain}}', domain);
+            const activeModel = state.modelName;
 
             try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${state.apiKey}`, {
+                // Attempt 1: With Google Search Grounding
+                let response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${state.apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         contents: [{ parts: [{ text: prompt }] }],
+                        tools: [{ google_search: {} }], // Enable Search Grounding
                         generationConfig: {
                             responseMimeType: "application/json"
                         }
                     })
                 });
 
-                if (!response.ok) throw new Error('API Request Failed');
+                // Fallback Mechanism
+                if (!response.ok) {
+                    console.warn("Grounding request failed. Retrying without search tool.");
+                    
+                    // Attempt 2: Standard generation without tools
+                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${activeModel}:generateContent?key=${state.apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            // tools removed
+                            generationConfig: {
+                                responseMimeType: "application/json"
+                            }
+                        })
+                    });
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error?.message || `API Error: ${response.status}`);
+                }
 
                 const data = await response.json();
                 let text = data.candidates[0].content.parts[0].text;
@@ -386,7 +471,9 @@ Each object must have:
                     <div class="col-span-full py-6 text-center">
                         <div class="inline-block p-4 rounded-md bg-[#ffebe9] border border-[#ff818266] text-[#cf222e] text-sm">
                             <i class="fa-solid fa-circle-exclamation mr-1"></i>
-                            ${error.message}. Check your API key.
+                            <strong>Error with model "${activeModel}":</strong><br>
+                            ${error.message}. <br>
+                            <span class="text-xs mt-2 block text-[#24292f]">Tip: Use "List Models" in settings to find a valid model name.</span>
                         </div>
                     </div>
                 `;
@@ -418,18 +505,68 @@ Each object must have:
                     `<span class="gh-tag px-2 py-0.5 text-xs font-medium mr-1 mb-1 border border-[#ddf4ff] hover:bg-[#b6e3ff] transition-colors cursor-default">${t}</span>`
                 ).join('') : '';
 
+                // Fallback Logic:
+                const scholarUrl = `https://scholar.google.com/scholar?q=${encodeURIComponent(expert.name)}`;
+                const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(expert.name + ' ' + expert.affiliation)}`;
+                
+                // Safe Link Logic:
+                // To guarantee the primary name link NEVER 404s, we default it to Search.
+                // We ONLY use the specific expert.url if it looks like a high-reliability domain.
+                
+                let isStableUrl = false;
+                let specificUrl = null;
+
+                if (expert.url && expert.url.trim().length > 0) {
+                     try {
+                        const urlObj = new URL(expert.url);
+                        const domain = urlObj.hostname.toLowerCase();
+                        if (domain.includes('wikipedia.org') || 
+                            domain.includes('linkedin.com') || 
+                            domain.includes('scholar.google.com')) {
+                            isStableUrl = true;
+                            specificUrl = expert.url;
+                        } else if (expert.url.length > 0) {
+                            // It's a URL, but maybe not 100% stable (e.g. university faculty page).
+                            // We will provide it as a button, but NOT on the name to be safe.
+                            specificUrl = expert.url;
+                        }
+                     } catch(e) {
+                         // invalid url, ignore
+                     }
+                }
+
+                // If it is stable (Wiki/LinkedIn), we can link the name.
+                // If it is NOT stable (random .edu page), we link name to search, and put url in button.
+                const nameLink = isStableUrl ? specificUrl : searchUrl;
+
                 card.innerHTML = `
                     <div class="flex items-start justify-between mb-2">
                         <div>
                             <div class="flex items-center gap-2">
                                 <i class="fa-regular fa-id-card text-[#57606a]"></i>
                                 <h4 class="text-base font-bold">
-                                    <a href="https://www.google.com/search?q=${encodeURIComponent(expert.name + ' ' + expert.affiliation)}" target="_blank" class="gh-link">
+                                    <a href="${nameLink}" target="_blank" class="gh-link flex items-center gap-1">
                                         ${expert.name}
+                                        ${isVerifiedLink(specificUrl) ? '<i class="fa-solid fa-check-circle text-green-600 text-[10px]" title="Stable Profile"></i>' : ''}
                                     </a>
                                 </h4>
                             </div>
                             <p class="text-xs text-[#57606a] mt-1">${expert.role || 'Expert'} at ${expert.affiliation}</p>
+                        </div>
+                        
+                        <!-- Action Buttons -->
+                        <div class="flex gap-1 flex-wrap justify-end max-w-[40%]">
+                            ${specificUrl && !isStableUrl ? `
+                            <a href="${specificUrl}" target="_blank" class="text-xs text-[#57606a] hover:text-[#0969da] border border-[#d0d7de] rounded px-2 py-0.5 bg-gray-50 flex items-center gap-1 transition-colors" title="External Link">
+                                <i class="fa-solid fa-external-link-alt"></i> Web
+                            </a>` : ''}
+                            
+                            <a href="${scholarUrl}" target="_blank" class="text-xs text-[#57606a] hover:text-[#0969da] border border-[#d0d7de] rounded px-2 py-0.5 bg-gray-50 flex items-center gap-1 transition-colors" title="View on Google Scholar">
+                                <i class="fa-solid fa-graduation-cap"></i>
+                            </a>
+                            <a href="${searchUrl}" target="_blank" class="text-xs text-[#57606a] hover:text-[#0969da] border border-[#d0d7de] rounded px-2 py-0.5 bg-gray-50 flex items-center gap-1 transition-colors" title="Search on Google">
+                                <i class="fa-brands fa-google"></i>
+                            </a>
                         </div>
                     </div>
                     
@@ -447,6 +584,11 @@ Each object must have:
                 `;
                 els.expertsGrid.appendChild(card);
             });
+        }
+        
+        function isVerifiedLink(url) {
+            if (!url) return false;
+            return url.includes('wikipedia.org') || url.includes('linkedin.com') || url.includes('scholar.google.com');
         }
 
         // --- Event Listeners ---
